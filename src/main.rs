@@ -1,9 +1,12 @@
 use log::info;
 use std::io::Error;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+#[macro_use]
+mod test_helpers;
 mod db;
+mod schedule;
 use crate::db::Db;
 
 fn main() -> Result<(), Error> {
