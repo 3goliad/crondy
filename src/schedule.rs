@@ -1,9 +1,8 @@
 use std::str::FromStr;
 
 use nom::{
-    alt, call, char, complete, count, digit1, error_position, map, map_opt, map_res, named, opt,
-    preceded, sep, separated_list, separated_list_complete, separated_pair, tag, tuple,
-    tuple_parser, wrap_sep, ws,
+    alt, call, char, complete, digit1, error_position, map, map_opt, map_res, named, opt, preceded,
+    separated_list, separated_list_complete, separated_pair, space1, tag, tuple, tuple_parser,
 };
 
 const SECONDS_PER_MINUTE: usize = 60;
@@ -29,8 +28,118 @@ const FIRST_DAY_OF_WEEK: usize = 0;
 const LAST_DAY_OF_WEEK: usize = 7;
 const DAY_OF_WEEK_COUNT: usize = (LAST_DAY_OF_WEEK - FIRST_DAY_OF_WEEK + 1);
 
+#[derive(Debug, PartialEq)]
+pub enum Schedule {
+    Reboot,
+    When(When),
+}
+
+impl Schedule {
+    pub fn parse(input: &str) -> nom::IResult<&str, Self> {
+        parse_schedule(input)
+    }
+}
+
+named!(parse_schedule<&str, Schedule>, alt!(
+    map!(tag!("@reboot"),
+         |_| Schedule::Reboot) |
+    map!(alt!(tag!("@yearly") | tag!("@annually")),
+         |_| Schedule::When(When {
+             minute: Field::Value(0),
+             hour: Field::Value(0),
+             day_of_month: Field::Value(1),
+             month: Field::Value(1),
+             day_of_week: Field::Star(None),
+         })) |
+    map!(tag!("@monthly"),
+         |_| Schedule::When(When {
+             minute: Field::Value(0),
+             hour: Field::Value(0),
+             day_of_month: Field::Value(1),
+             month: Field::Star(None),
+             day_of_week: Field::Star(None),
+         })) |
+    map!(tag!("@weekly"),
+         |_| Schedule::When(When {
+             minute: Field::Value(0),
+             hour: Field::Value(0),
+             day_of_month: Field::Star(None),
+             month: Field::Star(None),
+             day_of_week: Field::Value(0),
+         })) |
+    map!(alt!(tag!("@daily") | tag!("@midnight")),
+         |_| Schedule::When(When {
+             minute: Field::Value(0),
+             hour: Field::Value(0),
+             day_of_month: Field::Star(None),
+             month: Field::Star(None),
+             day_of_week: Field::Star(None),
+         })) |
+    map!(tag!("@hourly"),
+         |_| Schedule::When(When {
+             minute: Field::Value(0),
+             hour: Field::Star(None),
+             day_of_month: Field::Star(None),
+             month: Field::Star(None),
+             day_of_week: Field::Star(None),
+         })) |
+    map!(parse_when, |when| Schedule::When(when))
+));
+
+#[derive(Debug, PartialEq)]
+pub struct When {
+    pub minute: Field,
+    pub hour: Field,
+    pub day_of_month: Field,
+    pub month: Field,
+    pub day_of_week: Field,
+}
+
+fn parse_when(input: &str) -> nom::IResult<&str, When> {
+    named!(inner<&str, Vec<Field>>, separated_list_complete!(space1, parse_field));
+    match inner(input) {
+        Ok((remaining, fields)) => {
+            if fields.len() == 5 {
+                Ok((
+                    remaining,
+                    When {
+                        minute: fields[0].clone(),
+                        hour: fields[1].clone(),
+                        day_of_month: fields[2].clone(),
+                        month: fields[3].clone(),
+                        day_of_week: fields[4].clone(),
+                    },
+                ))
+            } else {
+                Err(nom::Err::Incomplete(nom::Needed::Unknown))
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod test_parse_when {
+    use super::*;
+
+    #[test]
+    fn parses_all_stars() {
+        assert_parses_to!(
+            parse_when("* * * * * "),
+            When {
+                minute: Field::Star(None),
+                hour: Field::Star(None),
+                day_of_month: Field::Star(None),
+                month: Field::Star(None),
+                day_of_week: Field::Star(None)
+            },
+            " "
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-enum Field {
+pub enum Field {
     Value(usize),
     Range(usize, usize, Option<usize>), // begin, end, step
     List(Vec<(usize, Option<usize>)>),
@@ -97,6 +206,11 @@ mod test_parse_field {
     }
 
     #[test]
+    fn star_with_space() {
+        assert_parses_to!(parse_field("* *"), Field::Star(None), " *")
+    }
+
+    #[test]
     fn range() {
         assert_parses_to!(parse_field("4-5 "), Field::Range(4, 5, None), " ")
     }
@@ -124,80 +238,3 @@ mod test_parse_field {
         )
     }
 }
-
-#[derive(Debug, PartialEq)]
-struct When {
-    minute: Field,
-    hour: Field,
-    day_of_month: Field,
-    month: Field,
-    day_of_week: Field,
-}
-
-named!(parse_when<&str, When>, map!(ws!(count!(parse_field, 5)), |fields| {
-    When {
-        minute: fields[0].clone(),
-        hour: fields[1].clone(),
-        day_of_month: fields[2].clone(),
-        month: fields[3].clone(),
-        day_of_week: fields[4].clone()
-    }
-}));
-
-#[derive(Debug, PartialEq)]
-pub enum Schedule {
-    Reboot,
-    When(When),
-}
-
-impl Schedule {
-    pub fn parse(input: &str) -> nom::IResult<&str, Self> {
-        parse_schedule(input)
-    }
-}
-
-named!(parse_schedule<&str, Schedule>, alt!(
-    map!(tag!("@reboot"),
-         |_| Schedule::Reboot) |
-    map!(alt!(tag!("@yearly") | tag!("@annually")),
-         |_| Schedule::When(When {
-             minute: Field::Value(0),
-             hour: Field::Value(0),
-             day_of_month: Field::Value(1),
-             month: Field::Value(1),
-             day_of_week: Field::Star(None),
-         })) |
-    map!(tag!("@monthly"),
-         |_| Schedule::When(When {
-             minute: Field::Value(0),
-             hour: Field::Value(0),
-             day_of_month: Field::Value(1),
-             month: Field::Star(None),
-             day_of_week: Field::Star(None),
-         })) |
-    map!(tag!("@weekly"),
-         |_| Schedule::When(When {
-             minute: Field::Value(0),
-             hour: Field::Value(0),
-             day_of_month: Field::Star(None),
-             month: Field::Star(None),
-             day_of_week: Field::Value(0),
-         })) |
-    map!(alt!(tag!("@daily") | tag!("@midnight")),
-         |_| Schedule::When(When {
-             minute: Field::Value(0),
-             hour: Field::Value(0),
-             day_of_month: Field::Star(None),
-             month: Field::Star(None),
-             day_of_week: Field::Star(None),
-         })) |
-    map!(tag!("@hourly"),
-         |_| Schedule::When(When {
-             minute: Field::Value(0),
-             hour: Field::Star(None),
-             day_of_month: Field::Star(None),
-             month: Field::Star(None),
-             day_of_week: Field::Star(None),
-         })) |
-    map!(parse_when, |when| Schedule::When(when))
-));

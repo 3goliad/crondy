@@ -8,4 +8,6 @@ edition = "2018"
 signal-hook = "0.1.5"
 log = "*"
 pretty_env_logger = "*"
-nom = "4.1.1"
+[dependencies.nom]
+version = "4.1.1"
+features = ["verbose-errors"]
