@@ -52,8 +52,14 @@ mod test_parse_crontab {
     #[test]
     fn parses_comment_and_schedule() {
         let tab = Crontab::parse("\n# Howdy pardner\n* * * * * this is a command\n").unwrap();
-        println!("{:?}", tab.entries);
         assert!(tab.entries.len() == 1)
+    }
+
+    #[test]
+    fn applies_env_to_later_schedules() {
+        let tab = Crontab::parse("* * * * * first\nFOO = BAR\n* * * * 3 second").unwrap();
+        assert_eq!(tab.entries[0].envp, Vec::<String>::new());
+        assert_eq!(tab.entries[1].envp, vec!["FOO=BAR".to_owned()]);
     }
 }
 
