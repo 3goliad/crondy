@@ -118,26 +118,6 @@ fn parse_when(input: &str) -> nom::IResult<&str, When> {
     }
 }
 
-#[cfg(test)]
-mod test_parse_when {
-    use super::*;
-
-    #[test]
-    fn parses_all_stars() {
-        assert_parses_to!(
-            parse_when("* * * * * "),
-            When {
-                minute: Field::Star(None),
-                hour: Field::Star(None),
-                day_of_month: Field::Star(None),
-                month: Field::Star(None),
-                day_of_week: Field::Star(None)
-            },
-            " "
-        )
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Field {
     Value(usize),
@@ -182,9 +162,23 @@ named!(parse_field<&str, Field>, alt!(
 ));
 
 #[cfg(test)]
-mod test_parse_field {
+mod tests {
     use super::*;
-    use crate::test_helpers::*;
+
+    #[test]
+    fn parses_all_stars() {
+        assert_parses_to!(
+            parse_when("* * * * * "),
+            When {
+                minute: Field::Star(None),
+                hour: Field::Star(None),
+                day_of_month: Field::Star(None),
+                month: Field::Star(None),
+                day_of_week: Field::Star(None)
+            },
+            " "
+        )
+    }
 
     #[test]
     fn single_char_value() {

@@ -35,39 +35,28 @@ impl Crontab {
     }
 }
 
-#[cfg(test)]
-mod test_parse_crontab {
-    use super::*;
-
-    #[test]
-    fn parses_blanks() {
-        assert!(Crontab::parse("").is_ok())
-    }
-
-    #[test]
-    fn parses_empty_lines() {
-        assert!(Crontab::parse("  \n  \n").is_ok())
-    }
-
-    #[test]
-    fn parses_comment_and_schedule() {
-        let tab = Crontab::parse("\n# Howdy pardner\n* * * * * this is a command\n").unwrap();
-        assert!(tab.entries.len() == 1)
-    }
-
-    #[test]
-    fn applies_env_to_later_schedules() {
-        let tab = Crontab::parse("* * * * * first\nFOO = BAR\n* * * * 3 second").unwrap();
-        assert_eq!(tab.entries[0].envp, Vec::<String>::new());
-        assert_eq!(tab.entries[1].envp, vec!["FOO=BAR".to_owned()]);
-    }
-}
-
 #[derive(Debug, PartialEq)]
 enum CrontabLine {
     Entry(Entry),
     Env(String, String),
 }
+
+#[derive(Debug, PartialEq)]
+struct Entry {
+    envp: Vec<String>,
+    cmd: String,
+    schedule: Schedule,
+}
+
+named!(
+    parse_line<&str, Option<CrontabLine>>,
+    alt_complete!(
+        map!(parse_entry, |e| Some(CrontabLine::Entry(e))) |
+        map!(parse_env, |l| Some(l)) |
+        map!(parse_comment, |_| None) |
+        map!(empty_line, |_| None)
+    )
+);
 
 fn empty_line(input: &str) -> nom::IResult<&str, &str> {
     if input.len() == 0 {
@@ -84,65 +73,12 @@ fn empty_line(input: &str) -> nom::IResult<&str, &str> {
     }
 }
 
-named!(
-    parse_line<&str, Option<CrontabLine>>,
-    alt_complete!(
-        map!(parse_entry, |e| Some(CrontabLine::Entry(e))) |
-        map!(parse_env, |l| Some(l)) |
-        map!(parse_comment, |_| None) |
-        map!(empty_line, |_| None)
-    )
-);
-
-#[cfg(test)]
-mod test_parse_line {
-    use super::*;
-
-    #[test]
-    fn parses_nothing() {
-        assert_parses_to_exactly!(parse_line(""), None)
-    }
-
-    #[test]
-    fn parses_blanks() {
-        assert_parses_to_exactly!(parse_line(" \t"), None)
-    }
-
-    #[test]
-    fn stops_at_newline_after_nothing() {
-        assert_parses_to!(parse_line("\n"), None, "\n")
-    }
-
-    #[test]
-    fn stops_at_newline_after_blanks() {
-        assert_parses_to!(parse_line("  \n"), None, "\n")
-    }
-}
-
-#[derive(Debug, PartialEq)]
-struct Entry {
-    envp: Vec<String>,
-    cmd: String,
-    schedule: Schedule,
-}
-
 named!(parse_entry<&str, Entry>, map!(
     tuple!(Schedule::parse, map!(rest, |s| s.to_owned())),
     |(schedule, cmd)|
         Entry {envp: Vec::new(), cmd, schedule}
     ));
 
-#[cfg(test)]
-mod test_parse_entry {
-    use super::*;
-
-    #[test]
-    fn parse_all_stars() {
-        let (rem, entry) = parse_entry("* * * * * this is a command").unwrap();
-        assert_eq!(rem, "");
-        assert_eq!(entry.cmd, " this is a command".to_owned());
-    }
-}
 named!(
     parse_env<&str, CrontabLine>,
     map!(
@@ -158,12 +94,64 @@ named!(
     )
 );
 
+named!(parse_comment<&str, &str>, preceded!(char!('#'), rest));
+
 #[cfg(test)]
-mod test_parse_env {
+mod tests {
     use super::*;
 
     #[test]
-    fn parses_close_pairs() {
+    fn parse_crontab_blanks() {
+        assert!(Crontab::parse("").is_ok())
+    }
+
+    #[test]
+    fn parse_crontab_empty_lines() {
+        assert!(Crontab::parse("  \n  \n").is_ok())
+    }
+
+    #[test]
+    fn parse_crontab_comment_and_schedule() {
+        let tab = Crontab::parse("\n# Howdy pardner\n* * * * * this is a command\n").unwrap();
+        assert!(tab.entries.len() == 1)
+    }
+
+    #[test]
+    fn parse_crontab_applies_env_to_later_schedules() {
+        let tab = Crontab::parse("* * * * * first\nFOO = BAR\n* * * * 3 second").unwrap();
+        assert_eq!(tab.entries[0].envp, Vec::<String>::new());
+        assert_eq!(tab.entries[1].envp, vec!["FOO=BAR".to_owned()]);
+    }
+
+    #[test]
+    fn parse_line_nothing() {
+        assert_parses_to_exactly!(parse_line(""), None)
+    }
+
+    #[test]
+    fn parse_line_blanks() {
+        assert_parses_to_exactly!(parse_line(" \t"), None)
+    }
+
+    #[test]
+    fn parse_line_stops_at_newline_after_nothing() {
+        assert_parses_to!(parse_line("\n"), None, "\n")
+    }
+
+    #[test]
+    fn parse_line_stops_at_newline_after_blanks() {
+        assert_parses_to!(parse_line("  \n"), None, "\n")
+    }
+
+    #[test]
+    fn parse_entry_all_stars() {
+        let (rem, entry) = parse_entry("* * * * * this is a command").unwrap();
+        assert_eq!(rem, "");
+        assert_eq!(entry.cmd, " this is a command".to_owned());
+    }
+
+    #[test]
+    fn parse_env_parses_close_pairs() {
         assert_parses_to_exactly!(
             parse_env("FOO=bar"),
             CrontabLine::Env("FOO".to_string(), "bar".to_string())
@@ -171,7 +159,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn parses_distant_pairs() {
+    fn parse_env_parses_distant_pairs() {
         assert_parses_to_exactly!(
             parse_env("FOO = bar"),
             CrontabLine::Env("FOO".to_string(), "bar".to_string())
@@ -179,7 +167,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn strips_trailing_whitespace_from_name() {
+    fn parse_env_strips_trailing_whitespace_from_name() {
         assert_parses_to_exactly!(
             parse_env("FOO =bar"),
             CrontabLine::Env("FOO".to_string(), "bar".to_string())
@@ -187,7 +175,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn strips_leading_whitespace_from_value() {
+    fn parse_env_strips_leading_whitespace_from_value() {
         assert_parses_to_exactly!(
             parse_env("FOO= bar"),
             CrontabLine::Env("FOO".to_string(), "bar".to_string())
@@ -195,7 +183,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn preserves_trailing_whitespace_in_value() {
+    fn parse_env_preserves_trailing_whitespace_in_value() {
         assert_parses_to_exactly!(
             parse_env("FOO=bar "),
             CrontabLine::Env("FOO".to_string(), "bar ".to_string())
@@ -203,7 +191,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn preserves_spaces_in_value() {
+    fn parse_env_preserves_spaces_in_value() {
         assert_parses_to_exactly!(
             parse_env("FOO=bar baz"),
             CrontabLine::Env("FOO".to_string(), "bar baz".to_string())
@@ -211,7 +199,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn preserves_spaces_in_single_quotes() {
+    fn parse_env_preserves_spaces_in_single_quotes() {
         assert_parses_to_exactly!(
             parse_env("FOO=' baz'"),
             CrontabLine::Env("FOO".to_string(), " baz".to_string())
@@ -219,7 +207,7 @@ mod test_parse_env {
     }
 
     #[test]
-    fn preserves_spaces_in_double_quotes() {
+    fn parse_env_preserves_spaces_in_double_quotes() {
         assert_parses_to_exactly!(
             parse_env("FOO=\" baz\""),
             CrontabLine::Env("FOO".to_string(), " baz".to_string())
@@ -227,26 +215,20 @@ mod test_parse_env {
     }
 
     #[test]
-    fn preserves_spaces_in_name() {
+    fn parse_env_preserves_spaces_in_name() {
         assert_parses_to_exactly!(
             parse_env("FOO BAR=baz"),
             CrontabLine::Env("FOO BAR".to_string(), "baz".to_string())
         )
     }
-}
 
-named!(parse_comment<&str, &str>, preceded!(char!('#'), rest));
-
-#[cfg(test)]
-mod test_parse_comment {
-    use super::*;
     #[test]
-    fn parses_hash() {
+    fn parse_comment_hash() {
         assert_parses_to_exactly!(parse_comment("#"), "")
     }
 
     #[test]
-    fn parses_garbage() {
+    fn parse_comment_garbage() {
         assert_parses_to_exactly!(parse_comment("# trash here"), " trash here")
     }
 }
