@@ -1,6 +1,7 @@
 use log::{debug, error};
 
 use crate::schedule::Schedule;
+use failure::Error;
 use nom::{
     alt, alt_complete, call, char, complete, error_position, many1, map, named, none_of, preceded,
     rest, separated_pair, tuple, tuple_parser, AsChar, InputTakeAtPosition,
@@ -32,6 +33,13 @@ impl Crontab {
             }
         }
         Ok(Self { entries })
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        for entry in self.entries.iter() {
+            entry.schedule.validate()?;
+        }
+        Ok(())
     }
 }
 

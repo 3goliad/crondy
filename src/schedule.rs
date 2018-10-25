@@ -5,28 +5,23 @@ use nom::{
     separated_list, separated_list_complete, separated_pair, space1, tag, tuple, tuple_parser,
 };
 
-const SECONDS_PER_MINUTE: usize = 60;
+use failure::{bail, format_err, Error};
 
 const FIRST_MINUTE: usize = 0;
 const LAST_MINUTE: usize = 59;
-const MINUTE_COUNT: usize = (LAST_MINUTE - FIRST_MINUTE + 1);
 
 const FIRST_HOUR: usize = 0;
 const LAST_HOUR: usize = 23;
-const HOUR_COUNT: usize = (LAST_HOUR - FIRST_HOUR + 1);
 
 const FIRST_DAY_OF_MONTH: usize = 1;
 const LAST_DAY_OF_MONTH: usize = 31;
-const DAY_OF_MONTH_COUNT: usize = (LAST_DAY_OF_MONTH - FIRST_DAY_OF_MONTH + 1);
 
 const FIRST_MONTH: usize = 1;
 const LAST_MONTH: usize = 12;
-const MONTH_COUNT: usize = (LAST_MONTH - FIRST_MONTH + 1);
 
 /* note on DAY_OF_WEEK: 0 and 7 are both Sunday, for compatibility reasons. */
 const FIRST_DAY_OF_WEEK: usize = 0;
 const LAST_DAY_OF_WEEK: usize = 7;
-const DAY_OF_WEEK_COUNT: usize = (LAST_DAY_OF_WEEK - FIRST_DAY_OF_WEEK + 1);
 
 #[derive(Debug, PartialEq)]
 pub enum Schedule {
@@ -37,6 +32,13 @@ pub enum Schedule {
 impl Schedule {
     pub fn parse(input: &str) -> nom::IResult<&str, Self> {
         parse_schedule(input)
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        match &self {
+            Schedule::Reboot => Ok(()),
+            Schedule::When(when) => when.validate(),
+        }
     }
 }
 
@@ -95,6 +97,34 @@ pub struct When {
     pub day_of_week: Field,
 }
 
+impl When {
+    pub fn validate(&self) -> Result<(), Error> {
+        self.minute
+            .validate(FIRST_MINUTE, LAST_MINUTE)
+            .map_err(|e| format_err!("minute {}", e))
+            .and(
+                self.hour
+                    .validate(FIRST_HOUR, LAST_HOUR)
+                    .map_err(|e| format_err!("hour {}", e)),
+            )
+            .and(
+                self.day_of_month
+                    .validate(FIRST_DAY_OF_MONTH, LAST_DAY_OF_MONTH)
+                    .map_err(|e| format_err!("day of month {}", e)),
+            )
+            .and(
+                self.month
+                    .validate(FIRST_MONTH, LAST_MONTH)
+                    .map_err(|e| format_err!("month {}", e)),
+            )
+            .and(
+                self.day_of_week
+                    .validate(FIRST_DAY_OF_WEEK, LAST_DAY_OF_WEEK)
+                    .map_err(|e| format_err!("day of week {}", e)),
+            )
+    }
+}
+
 fn parse_when(input: &str) -> nom::IResult<&str, When> {
     named!(inner<&str, Vec<Field>>, separated_list_complete!(space1, parse_field));
     match inner(input) {
@@ -124,6 +154,113 @@ pub enum Field {
     Range(usize, usize, Option<usize>), // begin, end, step
     List(Vec<(usize, Option<usize>)>),
     Star(Option<usize>), // step
+}
+
+impl Field {
+    pub fn validate(&self, lower_bound: usize, upper_bound: usize) -> Result<(), Error> {
+        match self {
+            Field::Value(value) => {
+                if *value < lower_bound {
+                    bail!(
+                        "value too low (got {} but expected no less than {})",
+                        value,
+                        lower_bound
+                    );
+                }
+                if *value > upper_bound {
+                    bail!(
+                        "value too high (got {} but expected no more than {})",
+                        value,
+                        upper_bound
+                    );
+                }
+            }
+            Field::Range(start, end, maybe_step) => {
+                if start > end {
+                    bail!(
+                        "range out of order (start {} came after end {})",
+                        start,
+                        end
+                    );
+                }
+                if let Some(step) = maybe_step {
+                    if (start + step) >= *end {
+                        bail!(
+                            "step too big (range only covers {} but step was {})",
+                            end - start,
+                            step
+                        );
+                    }
+                }
+                if *start < lower_bound {
+                    bail!(
+                        "range start too low (got {} but expected no less than {})",
+                        start,
+                        lower_bound
+                    );
+                }
+                if *end > upper_bound {
+                    bail!(
+                        "range end too high (got {} but expected no more than {})",
+                        end,
+                        upper_bound
+                    );
+                }
+            }
+            Field::Star(None) => (),
+            Field::Star(Some(step)) => {
+                if *step > upper_bound - lower_bound {
+                    bail!(
+                        "step too big (field only covers {} but step was {})",
+                        upper_bound - lower_bound,
+                        step
+                    );
+                }
+            }
+            Field::List(items) => {
+                for item in items {
+                    match item {
+                        (value, None) => {
+                            if *value < lower_bound {
+                                bail!(
+                                    "list value too low (got {} but expected no less than {})",
+                                    value,
+                                    lower_bound
+                                );
+                            }
+                            if *value > upper_bound {
+                                bail!(
+                                    "list value too high (got {} but expected no more than {})",
+                                    value,
+                                    upper_bound
+                                );
+                            }
+                        }
+                        (start, Some(end)) => {
+                            if start > end {
+                                bail!(
+                                    "list range out of order (start {} came after end {})",
+                                    start,
+                                    end
+                                );
+                            }
+                            if *start < lower_bound {
+                                bail!("list range start too low (got {} but expected no less than {})", start, lower_bound);
+                            }
+                            if *end > upper_bound {
+                                bail!(
+                                    "list range end too high (got {} but expected no more than {})",
+                                    end,
+                                    upper_bound
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 named!(integer<&str, usize>, map_res!(digit1, |s| usize::from_str(s)));
