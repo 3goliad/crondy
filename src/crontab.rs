@@ -1,7 +1,7 @@
-use log::{debug, error};
+use log::debug;
 
 use crate::schedule::Schedule;
-use failure::Error;
+use failure::{Error, bail};
 use nom::{
     alt, alt_complete, call, char, complete, error_position, many1, map, named, none_of, preceded,
     rest, separated_pair, tuple, tuple_parser, AsChar, InputTakeAtPosition,
@@ -13,7 +13,7 @@ pub struct Crontab {
 }
 
 impl Crontab {
-    pub fn parse(input: &str) -> Result<Self, std::io::Error> {
+    pub fn parse(input: &str) -> Result<Self, Error> {
         let mut entries = Vec::new();
         let mut env = Vec::new();
         for line in input.lines() {
@@ -26,10 +26,8 @@ impl Crontab {
                     Some(CrontabLine::Env(n, v)) => env.push(format!("{}={}", n, v)),
                     None => debug!("parsed an empty line"),
                 },
-                Ok((remaining, _)) => error!("leftovers {}", remaining),
-                Err(nom::Err::Incomplete(_)) => error!("incomplete"),
-                Err(nom::Err::Error(_)) => error!("errorerrorerror"),
-                Err(nom::Err::Failure(_)) => error!("failure"),
+                Ok((remaining, _)) => bail!("crontab line parser failed to consume all input (leftovers: {})", remaining),
+                Err(e) => bail!("crontab line parser encountered an error: {}", e)
             }
         }
         Ok(Self { entries })
@@ -40,6 +38,15 @@ impl Crontab {
             entry.schedule.validate()?;
         }
         Ok(())
+    }
+
+    pub fn run_reboot_jobs(&self) {
+        debug!("running reboot jobs");
+        for entry in self.entries.iter() {
+            if let Schedule::Reboot = entry.schedule {
+                debug!("scheduling reboot job: {:?}", &entry);
+            }
+        }
     }
 }
 
